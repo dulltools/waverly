@@ -3,7 +3,7 @@
 //! This library is meant to provide access to all data within a WAV file,
 //! including FACT and PEAK chunks and extensible version of format chunks.
 //!
-//! It also supports `no_std` to be used on embedded systems.
+//! It also supports `no_std`.
 //!
 //! # Usage
 //!
@@ -257,7 +257,6 @@ impl Wave {
 mod tests {
     extern crate std;
     use super::*;
-    //use binrw::{io::Cursor};
     use std::io::Cursor;
     use std::fs;
     use std::fs::File;
