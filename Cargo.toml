@@ -1,0 +1,10 @@
+[package]
+name = "waverly"
+version = "0.1.0"
+edition = "2021"
+description = "Parse and write wav files"
+license = "MIT"
+
+[dependencies]
+binrw = { version = "0.8.4" }
+
