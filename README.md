@@ -1,4 +1,6 @@
 # waverly
+[![docs.rs](https://docs.rs/waverly/badge.svg)](https://docs.rs/waverly)
+
 Waverly is a Rust library that allows for easy parsing and writing of WAV files.
 
 ## TODO
