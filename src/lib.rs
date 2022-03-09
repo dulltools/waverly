@@ -36,6 +36,9 @@
 extern crate alloc;
 
 #[cfg(not(feature="std"))]
+use alloc::vec;
+
+#[cfg(not(feature="std"))]
 use alloc::vec::Vec;
 
 use binrw::{binrw, until_exclusive, io, BinRead, BinWrite};
@@ -98,7 +101,7 @@ pub enum WaveFormat {
 #[derive(Debug, PartialEq)]
 pub struct FormatChunk {
     #[br(little)]
-    pub format_chunk_size: u32,
+    pub size: u32,
     #[br(little)]
     pub audio_format: WaveFormat,
     #[br(little)]
@@ -175,7 +178,7 @@ pub struct PeakChunk {
 
 /// Amplitude peak
 #[binrw]
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Peak {
     #[br(little)]
     pub value: f32,
@@ -191,7 +194,7 @@ pub struct Peak {
 #[derive(Debug, PartialEq)]
 struct RiffChunk {
     #[br(little)]
-    chunk_size: u32,
+    size: u32,
 }
 
 #[binrw]
@@ -205,6 +208,18 @@ pub struct Wave {
 }
 
 impl Wave {
+    pub fn convert_pcm(self) -> Vec<f32> {
+        let mut data = Vec::new();
+        let entries_per_sample = (self.format.bits_per_sample / 8) as usize; 
+
+        for (i, _amp) in self.data.data.iter().step_by(entries_per_sample).enumerate() {
+            for j in 0..entries_per_sample {
+            }
+            data.push(self.data.data[i+j])
+        }
+        data
+    }
+
     pub fn from_reader<T: Seek + Read>(mut reader: T) -> Result<Wave> {
         let my_file: MyFile = MyFile::read(&mut reader)?;
 
@@ -251,6 +266,24 @@ impl Wave {
         self.write_to(&mut writer)?;
         Ok(())
     }
+
+    /*
+    pub fn find_peaks(self) -> Vec<Peak> {
+        let num_channels = self.format.num_channels as usize;
+        let mut peaks: Vec<Peak> = vec![Peak { value: 0.0, position: 0}; num_channels];
+
+        for (i, _amp) in self.data.data.iter().step_by(num_channels).enumerate() {
+            for j in 0..num_channels {
+                let new_val = self.data.data[i+j];
+                if new_val > peaks[j].value {
+                    peaks[j] = Peak { value: new_val, position: i + j }
+                }
+            }
+        }
+
+        return peaks
+    }
+    */
 }
 
 #[cfg(test)]
