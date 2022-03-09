@@ -11,7 +11,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! waverly = "0.1"
+//! waverly = "1.0"
 //! ```
 //!
 //! Next:
@@ -119,7 +119,7 @@ pub struct FormatChunk {
     pub block_align: u16,
     #[br(little)]
     pub bits_per_sample: u16,
-    #[br(little, if(audio_format == WaveFormat::Extensible))]
+    #[br(little, if(audio_format != WaveFormat::Pcm))]
     pub extensible: Option<ExtensibleFormat>,
 }
 
@@ -213,9 +213,10 @@ impl Wave {
         let entries_per_sample = (self.format.bits_per_sample / 8) as usize; 
 
         for (i, _amp) in self.data.data.iter().step_by(entries_per_sample).enumerate() {
-            for j in 0..entries_per_sample {
-            }
-            data.push(self.data.data[i+j])
+            let sample = (0..entries_per_sample).reduce(|acc, j| {
+                (acc >> 8) | self.data.data[i+j.into()]
+            }).unwrap() as f32;
+            data.push(sample)
         }
         data
     }
@@ -251,6 +252,12 @@ impl Wave {
         if format == None {
             return Err(io::Error::new(ErrorKind::InvalidInput, "FORMAT chunk was not found in file.").into());
         }
+
+        /*
+        if let Some(format) = format.audio_format != WaveFormat::Pcm && fact == None {
+            return Err(io::Error::new(ErrorKind::InvalidInput, "FACT format is required for non-PCM WAV formats").into());
+        }
+        */
 
 
         Ok(Wave {
