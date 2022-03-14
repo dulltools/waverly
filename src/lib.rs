@@ -30,13 +30,12 @@
 //! }
 //! ```
 
+//#![feature(const_type_id)]
+
 #![cfg_attr(not(feature="std"), no_std)]
 
 #[cfg(not(feature="std"))]
 extern crate alloc;
-
-#[cfg(not(feature="std"))]
-use alloc::vec;
 
 #[cfg(not(feature="std"))]
 use alloc::vec::Vec;
@@ -66,7 +65,7 @@ impl From<binrw::Error> for WaverlyError {
 #[binrw]
 #[derive(Debug)]
 struct MyFile {
-    #[br(parse_with = until_exclusive(|byte| byte == &Chunk::Unhandled))]
+    #[br(parse_with = until_exclusive(|byte| byte == &Chunk::EOF))]
     chunks: Vec<Chunk>,
 }
 
@@ -78,9 +77,14 @@ enum Chunk {
     Fact(FactChunk),
     Peak(PeakChunk),
     Data(DataChunk),
-    // eof
+    /// This is a "patch" to help process malformed WAV files that contain extra data where none
+    /// should exist. Such as in the case of a PCM formatted WAV file that contains an extensible
+    /// format data that's empty.
+    #[brw(magic = b"\0")]
+    Empty,
+    /// EOF
     #[brw(magic = b"")]
-    Unhandled,
+    EOF,
 }
 
 #[binrw]
@@ -94,6 +98,50 @@ pub enum WaveFormat {
     /// 8-bit ITU-T G.711 µ-law
     Mulaw = 0x07,
     Extensible = 0x08,
+}
+
+pub enum SamplesIter {
+    SamplesI16Iter,
+    SamplesI32Iter,
+}
+
+pub struct SamplesI16Iter<'s> {
+    data: &'s Vec<u8>,
+    index: usize ,
+}
+
+impl<'s> Iterator for SamplesI16Iter<'s> 
+{
+    type Item = i16;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let entries_per_sample = 2;
+        let i = self.index;
+        // TODO upper bound
+        let sample = (1..entries_per_sample).fold(self.data[i] as u16, |acc, j| {
+            let data: u16 = self.data[i+j].into();
+            (data << 8_u8) | acc
+        }) as i16;
+
+        self.index += entries_per_sample;
+        Some(sample)
+    }
+}
+
+pub struct SamplesI32Iter<'s> {
+    data: &'s Vec<u8>,
+    index: usize ,
+}
+
+
+#[binrw]
+#[brw(repr = u16)]
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum BitDepth {
+    Eight = 0x08,
+    Sixteen = 0x10,
+    TwentyFour = 0x18,
+    ThirtyTwo = 0x20,
 }
 
 #[binrw]
@@ -118,7 +166,7 @@ pub struct FormatChunk {
     #[br(little)]
     pub block_align: u16,
     #[br(little)]
-    pub bits_per_sample: u16,
+    pub bits_per_sample: BitDepth,
     #[br(little, if(audio_format != WaveFormat::Pcm))]
     pub extensible: Option<ExtensibleFormat>,
 }
@@ -203,23 +251,16 @@ pub struct Wave {
     riff: RiffChunk,
     pub format: FormatChunk,
     pub data: DataChunk,
-    pub fact: Option<FactChunk>,
-    pub peak: Option<PeakChunk>,
+    pub fact: Option<FactChunk>, 
+    pub peak: Option<PeakChunk>, 
 }
-
 impl Wave {
-    pub fn convert_pcm(self) -> Vec<f32> {
-        let mut data = Vec::new();
-        let entries_per_sample = (self.format.bits_per_sample / 8) as usize; 
-
-        for (i, _amp) in self.data.data.iter().step_by(entries_per_sample).enumerate() {
-            let sample = (0..entries_per_sample).reduce(|acc, j| {
-                (acc >> 8) | self.data.data[i+j.into()]
-            }).unwrap() as f32;
-            data.push(sample)
-        }
-        data
-    }
+  pub fn samples<T>(&self) -> SamplesI16Iter {
+      SamplesI16Iter {
+          data: &self.data.data,
+          index: 0,
+      }
+  }
 
     pub fn from_reader<T: Seek + Read>(mut reader: T) -> Result<Wave> {
         let my_file: MyFile = MyFile::read(&mut reader)?;
@@ -237,7 +278,8 @@ impl Wave {
                 Chunk::Format(chunk) => format = Some(chunk),
                 Chunk::Fact(chunk) => fact = Some(chunk),
                 Chunk::Peak(chunk) => peak = Some(chunk),
-                Chunk::Unhandled => (),
+                Chunk::Empty=> (),
+                Chunk::EOF => (),
             }
         }
 
@@ -245,12 +287,12 @@ impl Wave {
             return Err(io::Error::new(ErrorKind::InvalidInput, "RIFF chunk was not found in file.").into());
         }
 
-        if data == None {
-            return Err(io::Error::new(ErrorKind::InvalidInput, "DATA chunk was not found in file.").into());
-        }
-
         if format == None {
             return Err(io::Error::new(ErrorKind::InvalidInput, "FORMAT chunk was not found in file.").into());
+        }
+
+        if data == None {
+            return Err(io::Error::new(ErrorKind::InvalidInput, "DATA chunk was not found in file.").into());
         }
 
         /*
@@ -300,6 +342,27 @@ mod tests {
     use std::io::Cursor;
     use std::fs;
     use std::fs::File;
+    use std::println;
+
+    #[test]
+    fn it_converts_to_f32() -> Result<()> {
+        let file = File::open("./meta/16bit-2ch-float-peak.wav")?;
+        let wave: Wave = Wave::from_reader(file)?;
+        println!("{:?}", wave.samples::<i16>().into_iter().collect::<Vec<_>>());
+        //println!("{:?}", wave.into_f32()[0]);
+        //println!("{:?}", wave.format.bits_per_sample);
+        //let c = wave.into_form();
+        /*
+        for i in 0..20000 {
+            if c[i] != 0 {
+                println!("{:?}", c[i]);
+            }
+        }
+        */
+
+
+        Ok(())
+    }
 
     #[test]
     fn it_pulls_format_chunk_correctly() -> Result<()> {
@@ -308,11 +371,11 @@ mod tests {
 
         let f = &wave.format;
         assert_eq!(f.sample_rate, 44100);
-        assert_eq!(f.bits_per_sample, 64);
+        assert_eq!(f.bits_per_sample, BitDepth::ThirtyTwo);
         assert_eq!(f.num_channels, 2);
         assert_eq!(f.audio_format, WaveFormat::IeeeFloat);
 
-        let block_align = f.num_channels * f.bits_per_sample / 8;
+        let block_align = f.num_channels * (f.bits_per_sample as u16) / 8;
         let byte_rate = f.sample_rate * block_align as u32;
         assert_eq!(f.byte_rate, byte_rate);
         assert_eq!(f.byte_rate, 705600);

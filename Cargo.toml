@@ -8,6 +8,9 @@ authors = ["aef-"]
 repository = "https://github.com/fraihaav/waverly/"
 exclude = ["meta/*"]
 
+[features]
+std = []
+
 [dependencies]
 binrw = { version = "0.8.4" }
-
+num = { version = "0.4", default-features = false }
