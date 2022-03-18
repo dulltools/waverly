@@ -3,43 +3,36 @@
 //! This library is meant to provide access to all data within a WAV file,
 //! including FACT and PEAK chunks and extensible version of format chunks.
 //!
-//! It also supports `no_std`.
+//! This library does not provide any methods to convert sound bytes into
+//! samples, though the necessary information to do so is available.
+//!
+//! `Waverly` also supports `no_std`, however requires `alloc` -- as this a requirement for `binrw` dependency.
 //!
 //! # Usage
 //!
-//! First, add this to your `Cargo.toml`
-//!
 //! ```toml
 //! [dependencies]
-//! waverly = "0.1"
+//! waverly = "0.2"
 //! ```
 //!
-//! Next:
+//! See tests.
 //!
-//! ```
-//! use std::fs::File;
-//! use waverly::Wave;
-//! use std::io::Cursor;
-//! fn main() -> Result<(), waverly::WaverlyError> {
-//!     let file = File::open("./meta/16bit-2ch-float-peak.wav")?;
-//!     let wave: Wave = Wave::from_reader(file)?;
-//!
-//!     let mut virt_file = Cursor::new(Vec::new());
-//!     wave.write(&mut virt_file)?;
-//!     Ok(())
-//! }
-//! ```
 
-#![cfg_attr(not(feature="std"), no_std)]
+#![cfg_attr(not(feature = "std"), no_std)]
 
-#[cfg(not(feature="std"))]
+#[cfg(not(feature = "std"))]
 extern crate alloc;
 
-#[cfg(not(feature="std"))]
+#[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 
-use binrw::{binrw, until_exclusive, io, BinRead, BinWrite};
-use binrw::io::{Read, Write, Seek, ErrorKind};
+use binrw::{binrw, until_exclusive, BinRead, BinWrite};
+
+#[cfg(not(feature = "std"))]
+use binrw::io;
+
+#[cfg(feature = "std")]
+use std::io;
 
 pub type Result<T> = core::result::Result<T, WaverlyError>;
 
@@ -63,7 +56,7 @@ impl From<binrw::Error> for WaverlyError {
 #[binrw]
 #[derive(Debug)]
 struct MyFile {
-    #[br(parse_with = until_exclusive(|byte| byte == &Chunk::Unhandled))]
+    #[br(parse_with = until_exclusive(|byte| byte == &Chunk::Eof))]
     chunks: Vec<Chunk>,
 }
 
@@ -75,9 +68,14 @@ enum Chunk {
     Fact(FactChunk),
     Peak(PeakChunk),
     Data(DataChunk),
-    // eof
+    /// This is a "patch" to help process malformed WAV files that contain extra data where none
+    /// should exist. Such as in the case of a PCM formatted WAV file that contains an extensible
+    /// format data that's empty.
+    #[brw(magic = b"\0")]
+    Empty,
+    /// EOF
     #[brw(magic = b"")]
-    Unhandled,
+    Eof,
 }
 
 #[binrw]
@@ -94,11 +92,22 @@ pub enum WaveFormat {
 }
 
 #[binrw]
+#[brw(repr = u16)]
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum BitDepth {
+    Eight = 0x08,
+    Sixteen = 0x10,
+    TwentyFour = 0x18,
+    ThirtyTwo = 0x20,
+    SixtyFour = 0x40,
+}
+
+#[binrw]
 #[brw(magic = b"WAVEfmt ")]
 #[derive(Debug, PartialEq)]
 pub struct FormatChunk {
     #[br(little)]
-    pub format_chunk_size: u32,
+    pub size: u32,
     #[br(little)]
     pub audio_format: WaveFormat,
     #[br(little)]
@@ -111,12 +120,12 @@ pub struct FormatChunk {
     /// The block alignment (in bytes) of the waveform data. Playback
     /// software needs to process a multiple of wBlockAlign bytes of data at
     /// a time, so the value of wBlockAlign can be used for buffer
-    /// alignment. 
+    /// alignment.
     #[br(little)]
     pub block_align: u16,
     #[br(little)]
-    pub bits_per_sample: u16,
-    #[br(little, if(audio_format == WaveFormat::Extensible))]
+    pub bits_per_sample: BitDepth,
+    #[br(little, if(audio_format == WaveFormat::Pcm))]
     pub extensible: Option<ExtensibleFormat>,
 }
 
@@ -162,7 +171,7 @@ pub struct PeakChunk {
     pub size: u32,
     #[br(little)]
     pub version: u32,
-    /// Unix epoch. This is used to see if the date of the peak data 
+    /// Unix epoch. This is used to see if the date of the peak data
     /// matches the modification date of the file. If not, the file
     /// should be rescanned for new peak data.
     #[br(little)]
@@ -175,7 +184,7 @@ pub struct PeakChunk {
 
 /// Amplitude peak
 #[binrw]
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Peak {
     #[br(little)]
     pub value: f32,
@@ -191,7 +200,7 @@ pub struct Peak {
 #[derive(Debug, PartialEq)]
 struct RiffChunk {
     #[br(little)]
-    chunk_size: u32,
+    size: u32,
 }
 
 #[binrw]
@@ -203,9 +212,8 @@ pub struct Wave {
     pub fact: Option<FactChunk>,
     pub peak: Option<PeakChunk>,
 }
-
 impl Wave {
-    pub fn from_reader<T: Seek + Read>(mut reader: T) -> Result<Wave> {
+    pub fn from_reader<T: io::Seek + io::Read>(mut reader: T) -> Result<Wave> {
         let my_file: MyFile = MyFile::read(&mut reader)?;
 
         let mut riff = None;
@@ -221,33 +229,54 @@ impl Wave {
                 Chunk::Format(chunk) => format = Some(chunk),
                 Chunk::Fact(chunk) => fact = Some(chunk),
                 Chunk::Peak(chunk) => peak = Some(chunk),
-                Chunk::Unhandled => (),
+                Chunk::Empty => (),
+                Chunk::Eof => (),
             }
         }
 
         if riff == None {
-            return Err(io::Error::new(ErrorKind::InvalidInput, "RIFF chunk was not found in file.").into());
-        }
-
-        if data == None {
-            return Err(io::Error::new(ErrorKind::InvalidInput, "DATA chunk was not found in file.").into());
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "RIFF chunk was not found in file.",
+            )
+            .into());
         }
 
         if format == None {
-            return Err(io::Error::new(ErrorKind::InvalidInput, "FORMAT chunk was not found in file.").into());
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "FORMAT chunk was not found in file.",
+            )
+            .into());
         }
 
+        if data == None {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "DATA chunk was not found in file.",
+            )
+            .into());
+        }
+
+        let format = format.unwrap();
+        if format.audio_format != WaveFormat::Pcm && fact == None {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "FACT format is required for non-PCM WAV formats",
+            )
+            .into());
+        }
 
         Ok(Wave {
             riff: riff.unwrap(),
             data: data.unwrap(),
-            format: format.unwrap(),
+            format,
             fact,
             peak,
         })
     }
 
-    pub fn write<T: Seek + Write>(self, mut writer: T) -> Result<()> {
+    pub fn write<T: io::Seek + io::Write>(self, mut writer: T) -> Result<()> {
         self.write_to(&mut writer)?;
         Ok(())
     }
@@ -257,22 +286,24 @@ impl Wave {
 mod tests {
     extern crate std;
     use super::*;
-    use std::io::Cursor;
     use std::fs;
     use std::fs::File;
+    use std::io::Cursor;
 
+    #[cfg(feature = "std")]
     #[test]
-    fn it_pulls_format_chunk_correctly() -> Result<()> {
+    fn it_reads_format() -> Result<()> {
         let file = File::open("./meta/16bit-2ch-float-peak.wav")?;
         let wave: Wave = Wave::from_reader(file)?;
 
         let f = &wave.format;
         assert_eq!(f.sample_rate, 44100);
-        assert_eq!(f.bits_per_sample, 64);
+
+        assert_eq!(f.bits_per_sample, BitDepth::SixtyFour);
         assert_eq!(f.num_channels, 2);
         assert_eq!(f.audio_format, WaveFormat::IeeeFloat);
 
-        let block_align = f.num_channels * f.bits_per_sample / 8;
+        let block_align = f.num_channels * (f.bits_per_sample as u16) / 8;
         let byte_rate = f.sample_rate * block_align as u32;
         assert_eq!(f.byte_rate, byte_rate);
         assert_eq!(f.byte_rate, 705600);
@@ -283,6 +314,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "std")]
     #[test]
     fn it_writes_data_correctly() -> Result<()> {
         let filename = "./meta/16bit-2ch-float-peak.wav";
@@ -293,6 +325,8 @@ mod tests {
         let mut virt_file = Cursor::new(Vec::new());
         wave.write(&mut virt_file)?;
         let buf = virt_file.into_inner();
+        // Test WAV file is improper and includes
+        // two bytes for Extensible data incorrectly.
         assert_eq!(buf.len(), metadata.len() as usize);
         assert_ne!(buf.len(), 0);
         let buf_iter = buf.into_iter();

@@ -1,6 +1,6 @@
 [package]
 name = "waverly"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Parse and write WAV files"
 license = "MIT"
@@ -8,6 +8,9 @@ authors = ["aef-"]
 repository = "https://github.com/fraihaav/waverly/"
 exclude = ["meta/*"]
 
-[dependencies]
-binrw = { version = "0.8.4" }
+[features]
+default = []
+std = ["binrw/std"]
 
+[dependencies]
+binrw = { version = "0.8.4", default-features = false }
