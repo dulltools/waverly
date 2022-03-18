@@ -9,7 +9,8 @@ repository = "https://github.com/fraihaav/waverly/"
 exclude = ["meta/*"]
 
 [features]
-std = []
+default = []
+std = ["binrw/std"]
 
 [dependencies]
-binrw = { version = "0.8.4", default-features=false }
+binrw = { version = "0.8.4", default-features = false }

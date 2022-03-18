@@ -6,37 +6,17 @@
 //! This library does not provide any methods to convert sound bytes into
 //! samples, though the necessary information to do so is available.
 //!
-//! If you are looking to optimize for memory and speed (when it comes to
-//! accessing sample data), I recommend [Hound](https://docs.rs/hound/latest/hound/). There are plans to
-//! support conversion to samples on first-passes, but because we support
-//! all chunks, memory will always be slightly higher than most alternatives.
-//!
-//! `Waverly` also supports `no_std`.
+//! `Waverly` also supports `no_std`, however requires `alloc` -- as this a requirement for `binrw` dependency.
 //!
 //! # Usage
-//!
-//! First, add this to your `Cargo.toml`
 //!
 //! ```toml
 //! [dependencies]
 //! waverly = "0.2"
 //! ```
 //!
-//! Next:
+//! See tests.
 //!
-//! ```
-//! use std::fs::File;
-//! use waverly::Wave;
-//! use std::io::Cursor;
-//! fn main() -> Result<(), waverly::WaverlyError> {
-//!     let file = File::open("./meta/16bit-2ch-float-peak.wav")?;
-//!     let wave: Wave = Wave::from_reader(file)?;
-//!
-//!     let mut virt_file = Cursor::new(Vec::new());
-//!     wave.write(&mut virt_file)?;
-//!     Ok(())
-//! }
-//! ```
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -76,7 +56,7 @@ impl From<binrw::Error> for WaverlyError {
 #[binrw]
 #[derive(Debug)]
 struct MyFile {
-    #[br(parse_with = until_exclusive(|byte| byte == &Chunk::EOF))]
+    #[br(parse_with = until_exclusive(|byte| byte == &Chunk::Eof))]
     chunks: Vec<Chunk>,
 }
 
@@ -95,7 +75,7 @@ enum Chunk {
     Empty,
     /// EOF
     #[brw(magic = b"")]
-    EOF,
+    Eof,
 }
 
 #[binrw]
@@ -250,7 +230,7 @@ impl Wave {
                 Chunk::Fact(chunk) => fact = Some(chunk),
                 Chunk::Peak(chunk) => peak = Some(chunk),
                 Chunk::Empty => (),
-                Chunk::EOF => (),
+                Chunk::Eof => (),
             }
         }
 
