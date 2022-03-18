@@ -1,4 +1,6 @@
 # waverly
+[![docs.rs](https://docs.rs/waverly/badge.svg)](https://docs.rs/waverly)
+
 Waverly is a Rust library that allows for easy parsing and writing of WAV files with the primary
 goal of providing access to all metadata within a WAV file, not just the format and data chunks.
 It's secondary goal is to support `no_std`. If you only care about the data chunk already 
@@ -18,7 +20,6 @@ fn main() -> Result<(), waverly::WaverlyError> {
     Ok(())
 }
 ```
-
 
 ## TODO
 - [x] Parse/read and write WAV files
